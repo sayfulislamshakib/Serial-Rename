@@ -161,6 +161,75 @@
       cursor: not-allowed;
       border: 1px solid var(--border-color);
     }
+
+    /* Auto-detect Toggle */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background-color: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+    }
+
+    .toggle-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .toggle-sublabel {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 1px;
+    }
+
+    .switch {
+      position: relative;
+      width: 34px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .switch-slider {
+      position: absolute;
+      inset: 0;
+      background-color: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 9px;
+      cursor: pointer;
+      transition: all 0.25s ease;
+    }
+
+    .switch-slider::before {
+      content: '';
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      left: 2px;
+      top: 50%;
+      transform: translateY(-50%);
+      background-color: var(--text-muted);
+      border-radius: 50%;
+      transition: all 0.25s ease;
+    }
+
+    .switch input:checked + .switch-slider {
+      background-color: rgba(12, 140, 233, 0.3);
+      border-color: var(--bg-accent);
+    }
+
+    .switch input:checked + .switch-slider::before {
+      transform: translateY(-50%) translateX(16px);
+      background-color: var(--bg-accent);
+    }
   </style>
 </head>
 
@@ -189,6 +258,21 @@
         </div>
       </div>
     </div>
+
+    <!-- Auto-detect Toggle -->
+    <div class="section">
+      <h2>Options</h2>
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">Auto Detect Order</div>
+          <div class="toggle-sublabel">Number by position in row</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="toggle-autodetect" checked>
+          <span class="switch-slider"></span>
+        </label>
+      </div>
+    </div>
   </div>
 
   <!-- Footer Actions -->
@@ -207,6 +291,10 @@
     let currentSelection = [];
     let singleNodeSiblings = [];
     let selectedFormat = 'prefix-dot'; // Default format
+    let autoDetect = true; // Default: auto-detection enabled
+
+    // Elements
+    const toggleAutodetect = document.getElementById('toggle-autodetect');
 
     // Initial load request
     parent.postMessage({ pluginMessage: { type: 'request-selection' } }, '*');
@@ -219,6 +307,12 @@
         selectedFormat = chip.getAttribute('data-format');
         updateSelectionState();
       });
+    });
+
+    // Listen for Auto-detect Toggle
+    toggleAutodetect.addEventListener('change', () => {
+      autoDetect = toggleAutodetect.checked;
+      updateSelectionState();
     });
 
 
@@ -269,6 +363,18 @@
     // Process sorting and enable renaming button
     function updateSelectionState() {
       let nodes = [...currentSelection];
+
+      // Sort nodes by spatial position: top-to-bottom first, then left-to-right
+      // This ensures serial numbers follow visual layout order regardless of Figma's selection order
+      nodes.sort((a, b) => {
+        const rowThreshold = Math.min(a.height || 0, b.height || 0) * 0.5;
+        // If nodes are roughly on the same row (Y difference within half the smaller height), sort by X
+        if (Math.abs(a.y - b.y) <= rowThreshold) {
+          return a.x - b.x;
+        }
+        return a.y - b.y;
+      });
+
       const count = nodes.length;
 
       if (count === 0) {
@@ -285,27 +391,34 @@
         const startNum = 1;
         const renames = [];
 
-        for (const node of nodes) {
-          const nodeTop = node.y;
-          const nodeBottom = node.y + (node.height || 0);
+        for (let i = 0; i < nodes.length; i++) {
+          const node = nodes[i];
+          let sequenceIndex;
 
-          // Filter siblings to same type, parent, AND same horizontal row (overlapping Y ranges)
-          let siblingNodes = singleNodeSiblings.filter(s => {
-            if (s.parentId !== node.parentId) return false;
-            if (s.type !== node.type) return false;
-            
-            const sibTop = s.y;
-            const sibBottom = s.y + (s.height || 0);
-            // Check if the vertical ranges overlap (this is the previous detection logic)
-            return sibTop < nodeBottom && sibBottom > nodeTop;
-          });
+          if (autoDetect) {
+            const nodeTop = node.y;
+            const nodeBottom = node.y + (node.height || 0);
 
-          // Sort siblings strictly left to right by X coordinate
-          siblingNodes.sort((a, b) => a.x - b.x);
+            // Filter siblings to same type, parent, AND same horizontal row (overlapping Y ranges)
+            let siblingNodes = singleNodeSiblings.filter(s => {
+              if (s.parentId !== node.parentId) return false;
+              if (s.type !== node.type) return false;
+              
+              const sibTop = s.y;
+              const sibBottom = s.y + (s.height || 0);
+              return sibTop < nodeBottom && sibBottom > nodeTop;
+            });
 
-          // Find the index of our selected node in the sorted siblings
-          const index = siblingNodes.findIndex(s => s.id === node.id);
-          const sequenceIndex = startNum + (index !== -1 ? index : 0);
+            // Sort siblings left to right by X coordinate
+            siblingNodes.sort((a, b) => a.x - b.x);
+
+            // Find the index of our selected node in the sorted siblings
+            const index = siblingNodes.findIndex(s => s.id === node.id);
+            sequenceIndex = startNum + (index !== -1 ? index : 0);
+          } else {
+            // No auto-detection: just number sequentially in selection order
+            sequenceIndex = startNum + i;
+          }
 
           const cleanBase = getCleanBaseName(node.name);
           const newName = formatName(cleanBase, sequenceIndex, selectedFormat);
